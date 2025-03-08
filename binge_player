@@ -1,0 +1,114 @@
+#! /usr/bin/env python3
+"""
+Script to binge watch series stored in provided folder.
+Remembers which episode you played last but does not remember timestamp
+"""
+import argparse
+import os
+import subprocess
+from os.path import join
+from sys import stdout
+from typing import List
+
+"""
+Last stdout line if film ended because file ended and not by user action
+"""
+PLAYBACK_ENDED_BY_END_OF_FILE_MESSAGE = "(End of file)"
+
+ACCEPTED_EXTENSIONS = [
+    ".mp4",
+    ".mkv"
+]
+
+def get_episodes_list(folder:str) -> List[str]:
+    """
+    get sorted episodes list
+
+    :param folder: base folder for search
+    :return: sorted list of episodes in folder
+    """
+    episodes:List[str] = []
+    for folder, _, files in os.walk(folder):
+        for file in files:
+            for accepted_extension in ACCEPTED_EXTENSIONS:
+                if file.endswith(accepted_extension):
+                    episodes.append(join(folder, file))
+                    continue
+    episodes.sort()
+    return episodes
+
+def get_config_path(folder: str) -> str:
+    return os.path.join(folder, "binge_config.txt")
+
+
+def save_current_episode(folder:str, episode:str):
+    with open(get_config_path(folder), "w") as file:
+        file.write(episode)
+
+def play_episode(episode:str) -> bool:
+    """
+    :param episode: file with episode
+    :return: true if movie ended because file ended (this means that next episode should probably be played
+    """
+    result = subprocess.run(["mpv", "--window-maximized=yes",episode],stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    stdout = result.stdout.decode().strip()
+    if result.returncode != 0:
+        raise Exception("Failure happened while trying to play the episode", result.stderr.decode(), stdout)
+    print(stdout)
+    if stdout.endswith(PLAYBACK_ENDED_BY_END_OF_FILE_MESSAGE):
+        return True
+    return False
+
+def get_current_episode(folder: str) -> str | None:
+    last_player_episode :str | None = None
+    config_path = get_config_path(folder)
+    if os.path.isfile(config_path):
+        with open(get_config_path(folder)) as file:
+            last_player_episode = file.read().strip()
+    episodes = get_episodes_list(folder)
+    if last_player_episode is None:
+        if len(episodes) == 0:
+            return None
+        return episodes[0]
+    index_of_last_played_episde = episodes.index(last_player_episode)
+    if index_of_last_played_episde == len(episodes) - 1:
+        # Last episod
+        return None
+    return episodes[index_of_last_played_episde + 1]
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.description = """
+    Play series in provided folder just like on streaming services using mpv.
+    Basically, this program takes list of movie files in provided folder and plays movies in alphabetic order until 
+    movie playing software returns non zero code
+    """
+    parser.add_argument("folder", help="Root folder from which we should")
+    parser.add_argument("--force-episode", help="Play provided episode file instead of next one in queue")
+    parser.add_argument("--list-episodes", help="Instead of playing, list all detected episodes", type=bool)
+
+    arguments = parser.parse_args()
+    movie_folder = arguments.folder
+    if arguments.list_episodes:
+        episodes = get_episodes_list(movie_folder)
+        for episode in episodes:
+            print(episode)
+        return
+    episode_to_play:str = arguments.force_episode
+    if episode_to_play is None:
+        episode_to_play = get_current_episode(movie_folder)
+
+    if episode_to_play is None:
+        print("No episodes found in", movie_folder)
+        exit(1)
+    while play_episode(episode_to_play):
+        save_current_episode(movie_folder, episode_to_play)
+        episode_to_play = get_current_episode(movie_folder)
+        if episode_to_play is None:
+            print("no episodes left")
+    print("End of series")
+
+
+if __name__ == '__main__':
+    main()
